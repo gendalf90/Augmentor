@@ -1,5 +1,6 @@
 using Augmentor;
 using Yarp.ReverseProxy.Configuration;
+using Yarp.ReverseProxy.Forwarder;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,18 +52,13 @@ var clusters = new[]
     }
 };
 
-builder.Services.AddHttpClient("OpenAI", client =>
-{
-    client.BaseAddress = new Uri(builder.Configuration.GetValue<string>("OpenAIUrl"));
-    client.Timeout = Timeout.InfiniteTimeSpan;
-});
-
 builder.Services
     .AddReverseProxy()
     .LoadFromMemory(routes, clusters);
 
+builder.Services.AddSingleton<IForwarderHttpClientFactory, CustomHttpClientFactory>();
+
 var app = builder.Build();
 
-app.UseMiddleware<OpenAIToolProxyMiddleware>();
 app.MapReverseProxy();
 app.Run();
