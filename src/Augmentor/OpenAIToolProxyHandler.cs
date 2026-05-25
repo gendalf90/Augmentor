@@ -1,12 +1,25 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
 namespace Augmentor;
 
-public class OpenAIToolProxyHandler(HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
+public class McpServerSettings
+{
+    public string Url { get; set; }
+
+    public string Authorization { get; set; }
+}
+
+public class McpOptions
+{
+    public McpServerSettings[] Servers { get; set; }
+}
+
+public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -70,19 +83,25 @@ public class OpenAIToolProxyHandler(HttpMessageHandler innerHandler) : Delegatin
     {
         var tools = request["tools"].AsArray();
 
-        var connectedMcp = tools
+        var connected = tools
             .Where(tool => tool["type"].GetValue<string>() == "connected_mcp")
             .ToList();
 
-        connectedMcp.ForEach(mcp => tools.Remove(mcp));
+        connected.ForEach(mcp => tools.Remove(mcp));
 
-        return connectedMcp
-            .Select(mcp => new McpServerItem
-            {
-                Url = mcp["server_url"].GetValue<string>(),
-                Authorization = mcp["authorization"].GetValue<string>()
-            })
-            .ToList();
+        var fromRequest = connected.Select(mcp => new McpServerItem
+        {
+            Url = mcp["server_url"].GetValue<string>(),
+            Authorization = mcp["authorization"].GetValue<string>()
+        });
+
+        var fromConfiguration = options.Value.Servers.Select(mcp => new McpServerItem
+        {
+            Url = mcp.Url,
+            Authorization = mcp.Authorization
+        });
+
+        return fromRequest.Concat(fromConfiguration).ToList();
     }
 
     private async Task FillMcpServerTools(McpServerItem server, JsonNode request, CancellationToken token)

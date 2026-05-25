@@ -3,9 +3,13 @@
     "configurations": [
         {
             "name": "C#: Augmentor Debug",
-            "type": "dotnet",
+            "type": "coreclr",
             "request": "launch",
-            "projectPath": "${workspaceFolder}/src/Augmentor/Augmentor.csproj"
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/src/Augmentor/bin/Debug/net10.0/Augmentor.dll",
+            "cwd": "${workspaceFolder}/src/Augmentor/bin/Debug/net10.0",
+            "console": "internalConsole",
+            "stopAtEntry": false
         }
     ]
 }

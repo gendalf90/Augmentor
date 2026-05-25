@@ -20,6 +20,11 @@ builder.Configuration
     .AddEnvironmentVariables()
     .AddCommandLine(args);
 
+builder.Services.Configure<McpOptions>(opt =>
+{
+    opt.Servers = builder.Configuration.GetSection("Mcp").Get<McpServerSettings[]>();
+});
+
 var routes = new[]
 {
     new RouteConfig
