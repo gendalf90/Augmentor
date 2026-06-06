@@ -7,32 +7,26 @@ using ModelContextProtocol.Protocol;
 
 namespace Augmentor;
 
-public class McpServerSettings
-{
-    public string Url { get; set; }
-
-    public string Authorization { get; set; }
-}
-
-public class McpOptions
-{
-    public McpServerSettings[] Servers { get; set; }
-}
-
-public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
+public class OpenAIToolProxyHandler(
+    IHttpClientFactory clientFactory, 
+    IOptions<McpOptions> options, 
+    HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (request.Method != HttpMethod.Post || !request.RequestUri.AbsolutePath.EndsWith("/v1/responses", StringComparison.OrdinalIgnoreCase))
+        if (!IsHandled(request))
         {
             return await base.SendAsync(request, cancellationToken);
         }
 
         var requestBody = await ReadBody(request.Content, cancellationToken);
 
-        var servers = await EnrichWithMcpTools(requestBody, cancellationToken);
+        if (!IsValid(requestBody))
+        {
+            return await base.SendAsync(request, cancellationToken);
+        }
 
-        DisableParallelToolCalls(requestBody);
+        var servers = await EnrichWithMcpTools(requestBody, cancellationToken);
 
         request.Content = Rewrite(request.Content, requestBody);
 
@@ -40,31 +34,93 @@ public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHan
 
         var responseBody = await ReadBody(response.Content, cancellationToken);
 
-        var history = new List<JsonNode>();
+        var history = ParseHistory(responseBody);
 
-        while (TryParseMcpCall(servers, responseBody, out var mcpCall))
+        while (!cancellationToken.IsCancellationRequested)
         {
-            EnrichRequest(requestBody, responseBody, history);
-            
-            await MakeMcpCall(requestBody, mcpCall, history, cancellationToken);
+            var calls = ParseSupportedCalls(responseBody, servers);
 
-            request.Content = Rewrite(request.Content, requestBody);
+            if (!calls.Any())
+            {
+                break;
+            }
+
+            foreach (var supportedCall in calls)
+            {
+                history.Add(await MakeMcpCall(supportedCall, cancellationToken));
+            }
+
+            if (!CheckIfAllCallsAreAnswered(history))
+            {
+                break;
+            }
+
+            request.Content = Rewrite(request.Content, CloneRequestWithHistory(requestBody, history));
 
             response = await base.SendAsync(request, cancellationToken);
 
             responseBody = await ReadBody(response.Content, cancellationToken);
+
+            history.AddRange(ParseHistory(responseBody));
         }
 
-        EnrichResponse(responseBody, history);
+        SetHistory(responseBody, history);
 
         response.Content = Rewrite(response.Content, responseBody);
 
         return response;
     }
 
-    private async Task<List<McpServerItem>> EnrichWithMcpTools(JsonNode request, CancellationToken token)
+    private bool IsHandled(HttpRequestMessage request)
     {
-        var servers = ReadConnectedMcpServers(request);
+        return request.Method == HttpMethod.Post && request.RequestUri.AbsolutePath.EndsWith("/v1/responses", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsValid(JsonNode request)
+    {
+        return request.Eq("store", false);
+    }
+
+    private JsonNode CloneRequestWithHistory(JsonNode request, List<JsonNode> history)
+    {
+        var clone = request.DeepClone();
+
+        foreach (var item in history)
+        {
+            clone.AddToArray("input", item);
+        }
+
+        return clone;
+    }
+
+    private List<JsonNode> ParseHistory(JsonNode response)
+    {
+        if (response.TryGetArray("output", out var result))
+        {
+            return result.ToList();
+        }
+
+        return [];
+    }
+
+    private bool CheckIfAllCallsAreAnswered(List<JsonNode> history)
+    {
+        var callIds = history
+            .Where(call => call.Eq("type", "function_call"))
+            .Select(call => call.To<string>("call_id"))
+            .ToHashSet();
+
+        var answerIds = history
+            .Where(call => call.Eq("type", "function_call_output"))
+            .Select(call => call.To<string>("call_id"))
+            .ToHashSet();
+
+        return callIds.Except(answerIds).Any();
+    }
+
+    private async Task<List<McpServerInfo>> EnrichWithMcpTools(JsonNode request, CancellationToken token)
+    {
+        var servers = ReadMcpServers();
 
         foreach (var server in servers)
         {
@@ -74,54 +130,33 @@ public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHan
         return servers;
     }
 
-    private void DisableParallelToolCalls(JsonNode request)
+    private List<McpServerInfo> ReadMcpServers()
     {
-        request["parallel_tool_calls"] = false;
-    }
-
-    private List<McpServerItem> ReadConnectedMcpServers(JsonNode request)
-    {
-        var tools = request["tools"].AsArray();
-
-        var connected = tools
-            .Where(tool => tool["type"].GetValue<string>() == "connected_mcp")
+        return options.Value.Servers
+            .Select(mcp => new McpServerInfo
+            {
+                Name = mcp.Name,
+                Endpoint = mcp.Endpoint
+            })
             .ToList();
-
-        connected.ForEach(mcp => tools.Remove(mcp));
-
-        var fromRequest = connected.Select(mcp => new McpServerItem
-        {
-            Url = mcp["server_url"].GetValue<string>(),
-            Authorization = mcp["authorization"].GetValue<string>()
-        });
-
-        var fromConfiguration = options.Value.Servers.Select(mcp => new McpServerItem
-        {
-            Url = mcp.Url,
-            Authorization = mcp.Authorization
-        });
-
-        return fromRequest.Concat(fromConfiguration).ToList();
     }
 
-    private async Task FillMcpServerTools(McpServerItem server, JsonNode request, CancellationToken token)
+    private async Task FillMcpServerTools(McpServerInfo server, JsonNode request, CancellationToken token)
     {
         var options = new HttpClientTransportOptions
         {
-            Endpoint = new Uri(server.Url),
-            AdditionalHeaders = new Dictionary<string, string>
-            {
-                ["Authorization"] = $"Bearer {server.Authorization}",
-            }
+            Endpoint = new Uri(server.Endpoint)
         };
+
+        var httpClient = clientFactory.CreateClient(server.Name);
         
-        var transport = new HttpClientTransport(options);
-        
+        await using var transport = new HttpClientTransport(options, httpClient);
+
         await using var mcpClient = await McpClient.CreateAsync(transport, cancellationToken: token);
 
         var mcpTools = await mcpClient.ListToolsAsync(cancellationToken: token);
 
-        var requestTools = request["tools"].AsArray();
+        var requestTools = request.GetOrAddArray("tools");
 
         foreach (var tool in mcpTools)
         {
@@ -141,70 +176,45 @@ public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHan
         return result;
     }
 
-    private bool TryParseMcpCall(List<McpServerItem> servers, JsonNode response, out McpCall result)
+    private List<McpCall> ParseSupportedCalls(JsonNode response, List<McpServerInfo> servers)
     {
-        result = null;
-        
-        var call = response["output"]
-            .AsArray()
-            .FirstOrDefault(item => item["type"].GetValue<string>() == "function_call");
+        if (!response.TryGetArray("output", out var output))
+        {
+            return [];
+        }
 
-        var answered = response["output"]
-            .AsArray()
-            .Where(item => item["type"].GetValue<string>() == "function_call_output")
-            .Select(item => item["call_id"].GetValue<string>())
+        return output
+            .Where(call => call.Eq("type", "function_call"))
+            .Select(call => Map(call, servers.Find(server => server.Tools.Any(tool => call.Eq("name", tool, StringComparer.OrdinalIgnoreCase)))))
+            .Where(call => call.Server != null)
             .ToList();
-
-        if (call == null)
-        {
-            return false;
-        }
-
-        var name = call["name"].GetValue<string>();
-        var mcpServer = servers.Find(server => server.Tools.Any(tool => string.Equals(tool, name, StringComparison.OrdinalIgnoreCase)));
-
-        if (mcpServer == null)
-        {
-            return false;
-        }
-
-        var callId = call["call_id"].GetValue<string>();
-
-        if (answered.Contains(callId, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var parameters = JsonSerializer.Deserialize<Dictionary<string, object>>(call["arguments"].GetValue<string>());
-
-        result = new McpCall(callId, name, parameters, mcpServer);
-
-        return true;
     }
 
-    private async Task MakeMcpCall(JsonNode request, McpCall call, List<JsonNode> history, CancellationToken token)
+    private McpCall Map(JsonNode node, McpServerInfo server)
+    {
+        var id = node.To<string>("call_id");
+        var name = node.To<string>("name");
+        var parameters = JsonSerializer.Deserialize<Dictionary<string, object>>(node.To<string>("arguments"));
+
+        return new McpCall(id, name, parameters, server);
+    }
+
+    private async Task<JsonNode> MakeMcpCall(McpCall call, CancellationToken token)
     {
         var options = new HttpClientTransportOptions
         {
-            Endpoint = new Uri(call.Server.Url),
-            AdditionalHeaders = new Dictionary<string, string>
-            {
-                ["Authorization"] = $"Bearer {call.Server.Authorization}",
-            }
+            Endpoint = new Uri(call.Server.Endpoint)
         };
+
+        var httpClient = clientFactory.CreateClient(call.Server.Name);
         
-        var transport = new HttpClientTransport(options);
+        await using var transport = new HttpClientTransport(options, httpClient);
         
         await using var mcpClient = await McpClient.CreateAsync(transport, cancellationToken: token);
 
         var toolResult = await mcpClient.CallToolAsync(call.Tool, call.Parameters, cancellationToken: token);
 
-        var result = Map(call, toolResult);
-
-        var input = request["input"].AsArray();
-
-        input.Add(result);
-        history.Add(result);
+        return Map(call, toolResult);
     }
 
     private JsonNode Map(McpCall call, CallToolResult callResult)
@@ -227,45 +237,9 @@ public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHan
         return JsonNode.Parse(stream);
     }
 
-    private void EnrichRequest(JsonNode request, JsonNode response, List<JsonNode> history)
+    private void SetHistory(JsonNode response, List<JsonNode> history)
     {
-        if (request["input"] is not JsonArray)
-        {
-            var value = request["input"].GetValue<string>();
-
-            request["input"] = new JsonArray()
-            {
-                JsonNode.Parse($$"""{"role": "user", "content": "{{value}}"}""")
-            };
-        }
-
-        var output = response["output"].AsArray();
-        var input = request["input"].AsArray();
-
-        foreach (var item in output)
-        {
-            input.Add(item);
-            history.Add(item);
-        }
-    }
-
-    private void EnrichResponse(JsonNode response, List<JsonNode> history)
-    {
-        var output = response["output"].AsArray();
-
-        var result = new JsonArray();
-
-        foreach (var item in history)
-        {
-            result.Add(item);
-        }
-
-        foreach (var item in output)
-        {
-            result.Add(item);
-        }
-
-        response["output"] = result;
+        response["output"] = new JsonArray(history.ToArray());
     }
 
     private HttpContent Rewrite(HttpContent content, JsonNode body)
@@ -276,14 +250,14 @@ public class OpenAIToolProxyHandler(IOptions<McpOptions> options, HttpMessageHan
         return new StringContent(json, type);
     }
 
-    private class McpServerItem
+    private class McpServerInfo
     {
-        public string Url { get; init; }
-
-        public string Authorization { get; init; }
+        public string Name { get; init; }
+        
+        public string Endpoint { get; init; }
 
         public List<string> Tools { get; } = [];
     }
 
-    private record McpCall(string Id, string Tool, IReadOnlyDictionary<string, object> Parameters, McpServerItem Server);
+    private record McpCall(string Id, string Tool, IReadOnlyDictionary<string, object> Parameters, McpServerInfo Server);
 }
