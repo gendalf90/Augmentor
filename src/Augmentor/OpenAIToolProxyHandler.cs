@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
@@ -85,9 +86,23 @@ public class OpenAIToolProxyHandler(
     {
         var clone = request.DeepClone();
 
+        if (!clone.TryGetArray("input", out var input))
+        {
+            var message = clone.To<string>("input");
+            var arr = new JsonArray();
+            var newMessage = JsonNode.Parse("""{"type": "message"}""");
+
+            newMessage["role"] = "user";
+            newMessage["content"] = message;
+
+            arr.Add(newMessage);
+
+            clone["input"] = arr;
+        }
+
         foreach (var item in history)
         {
-            clone.AddToArray("input", item);
+            clone.AddToArray("input", item.DeepClone());
         }
 
         return clone;
@@ -115,7 +130,7 @@ public class OpenAIToolProxyHandler(
             .Select(call => call.To<string>("call_id"))
             .ToHashSet();
 
-        return callIds.Except(answerIds).Any();
+        return !callIds.Except(answerIds).Any();
     }
 
     private async Task<List<McpServerInfo>> EnrichWithMcpTools(JsonNode request, CancellationToken token)
@@ -219,11 +234,17 @@ public class OpenAIToolProxyHandler(
 
     private JsonNode Map(McpCall call, CallToolResult callResult)
     {
-        var message = callResult.ToChatMessage(call.Id);
+        var builder = new StringBuilder();
+
+        foreach (var content in callResult.Content.OfType<TextContentBlock>())
+        {
+            builder.AppendLine(content.Text);
+        }
+
         var result = JsonNode.Parse("""{"type": "function_call_output"}""");
 
         result["call_id"] = call.Id;
-        result["output"] = message.Text;
+        result["output"] = builder.ToString();
 
         return result;
     }
@@ -239,7 +260,12 @@ public class OpenAIToolProxyHandler(
 
     private void SetHistory(JsonNode response, List<JsonNode> history)
     {
-        response["output"] = new JsonArray(history.ToArray());
+        response["output"] = new JsonArray();
+
+        foreach (var item in history)
+        {
+            response.AddToArray("output", item.DeepClone());
+        }
     }
 
     private HttpContent Rewrite(HttpContent content, JsonNode body)

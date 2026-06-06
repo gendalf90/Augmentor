@@ -28,7 +28,7 @@ public static class JsonExtensions
 
     public static T To<T>(this JsonNode node, string name)
     {
-        return node[name].GetValue<T>();
+        return node[name] == null ? default : node[name].GetValue<T>();
     }
 
     public static bool Eq<T>(this JsonNode node, string name, T comparand, IEqualityComparer<T> comparer = null)
