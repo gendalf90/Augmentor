@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace Augmentor;
 
-public static class JsonExtensions
+internal static class JsonExtensions
 {
     public static JsonArray GetOrAddArray(this JsonNode node, string name)
     {

@@ -2,14 +2,44 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "C#: Augmentor Debug",
+            "name": "C#: Augmentor Debug 1",
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/src/Augmentor/bin/Debug/net10.0/Augmentor.dll",
             "cwd": "${workspaceFolder}/src/Augmentor/bin/Debug/net10.0",
             "console": "internalConsole",
-            "stopAtEntry": false
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "ASPNETCORE_URLS": "http://localhost:5001",
+                "OpenAIUrl": "http://localhost:5002/"
+            }
+        },
+        {
+            "name": "C#: Augmentor Debug 2",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/src/Augmentor/bin/Debug/net10.0/Augmentor.dll",
+            "cwd": "${workspaceFolder}/src/Augmentor/bin/Debug/net10.0",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "ASPNETCORE_URLS": "http://localhost:5002",
+                "OpenAIUrl": "http://localhost:12434/"
+            }
         }
-    ]
+    ],
+    "compounds": [
+    {
+      "name": "C#: Augmentor Debug",
+      "configurations": [
+        "C#: Augmentor Debug 1",
+        "C#: Augmentor Debug 2"
+      ],
+      "stopAll": true
+    }
+  ]
 }

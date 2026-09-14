@@ -3,10 +3,13 @@ using Yarp.ReverseProxy.Forwarder;
 
 namespace Augmentor;
 
-public class CustomHttpClientFactory(IHttpClientFactory clientFactory, IOptions<McpOptions> options) : ForwarderHttpClientFactory
+internal class CustomHttpClientFactory(
+    IHttpClientFactory clientFactory, 
+    IOptions<McpOptions> options,
+    ILogger<OpenAIToolProxyHandler> logger) : ForwarderHttpClientFactory
 {
     protected override HttpMessageHandler WrapHandler(ForwarderHttpClientContext context, HttpMessageHandler handler)
     {
-        return new OpenAIToolProxyHandler(clientFactory, options, handler);
+        return new OpenAIToolProxyHandler(clientFactory, options, handler, logger);
     }
 }

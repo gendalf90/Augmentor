@@ -1,20 +1,22 @@
 using System.Net.Http.Headers;
 using Augmentor;
+using Destructurama;
 using Duende.AccessTokenManagement;
+using Serilog;
+using Serilog.Formatting.Compact;
 using Yarp.ReverseProxy.Configuration;
 using Yarp.ReverseProxy.Forwarder;
 
 var builder = WebApplication.CreateBuilder(args);
 
+Log.Logger = new LoggerConfiguration()
+    .Destructure.SystemTextJsonTypes()
+    .Enrich.FromLogContext()
+    .WriteTo.Console(new CompactJsonFormatter())
+    .CreateLogger();
+
 builder.Logging.ClearProviders();
-builder.Logging.AddSimpleConsole(opt =>
-{
-    opt.SingleLine = true;
-    opt.UseUtcTimestamp = true;
-    opt.IncludeScopes = true;
-    opt.TimestampFormat = "[yyyy-MM-dd HH:mm:ss.fff] ";
-});
-builder.Logging.SetMinimumLevel(LogLevel.Information);
+builder.Host.UseSerilog();
 
 builder.Configuration.Sources.Clear();
 builder.Configuration
@@ -33,7 +35,9 @@ builder.Services.Configure<McpOptions>(opt =>
         opt.Servers.Add(new McpServerOptions
         {
            Name = server.Key,
-           Endpoint = server.GetValue<string>("Endpoint")
+           Endpoint = server.GetValue<string>("Endpoint"),
+           Include = server.GetValue<string>("Include")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [],
+           Exclude = server.GetValue<string>("Exclude")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [],
         });
     }
 });
@@ -76,7 +80,7 @@ var routes = new[]
         ClusterId = "openai-cluster",
         Match = new() 
         { 
-            Path = Path.Combine(builder.Configuration.GetValue<string>("Prefix"), "{**catch-all}")
+            Path = "{**catch-all}"
         }
     }
 };

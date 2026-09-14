@@ -1,18 +1,22 @@
 namespace Augmentor;
 
-public class McpOptions
+internal class McpOptions
 {
     public List<McpServerOptions> Servers { get; set; }
 }
 
-public class McpServerOptions
+internal class McpServerOptions
 {
     public string Name { get; set; }
     
     public string Endpoint { get; set; }
+
+    public string[] Include { get; set; }
+
+    public string[] Exclude { get; set; }
 }
 
-public class McpOAuthOptions
+internal class McpOAuthOptions
 {
     public string TokenEndpoint { get; set; }
 
