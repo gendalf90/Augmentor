@@ -21,6 +21,11 @@ internal static class JsonExtensions
         return result != null;
     }
 
+    public static bool IsArray(this JsonNode node, string name)
+    {
+        return node[name] is JsonArray;
+    }
+
     public static void AddToArray(this JsonNode node, string name, JsonNode value)
     {
         node.GetOrAddArray(name).Add(value);

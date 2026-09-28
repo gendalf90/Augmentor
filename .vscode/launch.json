@@ -13,7 +13,7 @@
             "env": {
                 "ASPNETCORE_ENVIRONMENT": "Development",
                 "ASPNETCORE_URLS": "http://localhost:5001",
-                "OpenAIUrl": "http://localhost:5002/"
+                "Endpoint": "http://localhost:5002/"
             }
         },
         {
@@ -28,7 +28,7 @@
             "env": {
                 "ASPNETCORE_ENVIRONMENT": "Development",
                 "ASPNETCORE_URLS": "http://localhost:5002",
-                "OpenAIUrl": "http://localhost:12434/"
+                "Endpoint": "http://localhost:8080/"
             }
         }
     ],

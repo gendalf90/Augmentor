@@ -13,8 +13,8 @@ To run Augmentor you can use docker image:
 ```bash
 docker run -d \
   --name augmentor \
-  -e OpenAIUrl='http://1.2.3.4:1234/' \ # by default http://localhost:11434/ (with --network=host for example)
-  -e Mcp__Server1__Endpoint='http://1.2.3.4:8811/sse' \ # the settings format is Mcp__{any unique name or key}__{parameter name}
+  -e Endpoint='http://1.2.3.4:1234/' \ # url to OpenAI api (by default http://localhost:11434/ with --network=host for example)
+  -e Mcp__Server1__Endpoint='http://1.2.3.4:8811/sse' \ # the settings format is Mcp__{any unique name or key}__{parameter}
   -p 8080:8080 \
   --restart=unless-stopped \
   gendalf90/augmentor:latest
@@ -25,7 +25,9 @@ The complex example for using several mcp tools with authorization and tools fil
 ```bash
 docker run -d \
   --name augmentor \
-  -e OpenAIUrl='http://1.2.3.4:1234/' \
+  -e Endpoint='http://1.2.3.4:1234/' \
+  -e BearerToken='secret' \ Bearer token for OpenAI api access (also OAuth settings are supported as exampled below in Mcp: OAuth_{parameter})
+  -e ApiKey='secret' \ # Bearer token for this api access
   -e Mcp__Server1__Endpoint='http://1.2.3.4:8811/sse' \
   -e Mcp__Server1__BearerToken='token' \
   -e Mcp__Server1__Include='fetch_html,fetch_txt' \ # to use only these mcp tools from server
@@ -43,5 +45,8 @@ docker run -d \
 Then just send a question for model through the proxy (only *responses* api is supported):
 
 ```bash
-curl "http://localhost:8080/v1/responses" -d '{ "model": "huggingface.co/unsloth/qwen3-8b-gguf:UD-Q4_K_XL", "input": "Describe the content of the page: https://en.wikipedia.org/wiki/Artificial_intelligence" }'
+curl "http://localhost:8080/v1/responses" -d '{ "model": "Qwen3.5-9B-UD-Q4_K_XL", "input": "Describe the content of the page: https://en.wikipedia.org/wiki/Artificial_intelligence" }'
 ```
+
+**Notes**
+- Your models engine must support the `parallel_tool_calls` parameter because it is forcibly disabled and validated for every tool call response from model.
