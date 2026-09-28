@@ -26,7 +26,7 @@ The complex example for using several mcp tools with authorization and tools fil
 docker run -d \
   --name augmentor \
   -e Endpoint='http://1.2.3.4:1234/' \
-  -e BearerToken='secret' \ Bearer token for OpenAI api access (also OAuth settings are supported as exampled below in Mcp: OAuth_{parameter})
+  -e BearerToken='secret' \ # Bearer token for OpenAI api access (also OAuth settings are supported as exampled below in Mcp: OAuth_{parameter})
   -e ApiKey='secret' \ # Bearer token for this api access
   -e Mcp__Server1__Endpoint='http://1.2.3.4:8811/sse' \
   -e Mcp__Server1__BearerToken='token' \
