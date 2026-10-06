@@ -93,12 +93,16 @@ internal static class EndpointExtensions
 
         while (!token.IsCancellationRequested)
         {
-            if (!ValidateResponse(response, logger, out var reason))
+            var calls = GetUnansweredCalls(history, servers);
+
+            if (!ValidateCalls(calls, logger, out var reason))
             {
                 return Results.BadRequest(reason);
             }
 
-            if (!TryParseSupportedCall(response, servers, out var call))
+            var call = calls.Find(item => item.Server != null);
+
+            if (call == null)
             {
                 break;
             }
@@ -127,12 +131,16 @@ internal static class EndpointExtensions
     {
         while (!token.IsCancellationRequested)
         {
-            if (!ValidateResponse(response, logger, out var reason))
+            var calls = GetCalls(response, servers);
+            
+            if (!ValidateCalls(calls, logger, out var reason))
             {
                 return Results.BadRequest(reason);
             }
 
-            if (!TryParseSupportedCall(response, servers, out var call))
+            var call = calls.Find(item => item.Server != null);
+
+            if (call == null)
             {
                 break;
             }
@@ -271,19 +279,9 @@ internal static class EndpointExtensions
         return await response.Content.ReadFromJsonAsync<JsonNode>(token);
     }
 
-    private static bool ValidateResponse(JsonNode body, ILogger logger, out string reason)
+    private static bool ValidateCalls(List<McpCall> calls, ILogger logger, out string reason)
     {
         reason = null;
-
-        if (!body.TryGetArray("output", out var output))
-        {
-            return true;
-        }
-
-        var calls = output
-            .Where(item => item.Eq("type", "function_call"))
-            .Select(call => call.To<string>("name"))
-            .ToList();
 
         if (calls.Count > 1)
         {
@@ -297,28 +295,12 @@ internal static class EndpointExtensions
         return true;
     }
 
-    private static bool TryParseSupportedCall(JsonNode response, List<McpServerInfo> servers, out McpCall result)
-    {
-        result = null;
-        
-        if (!response.TryGetArray("output", out var output))
-        {
-            return false;
-        }
-
-        result = output
-            .Where(item => item.Eq("type", "function_call"))
-            .Select(item => Map(item, servers.Find(server => server.Tools.Any(tool => item.Eq("name", tool, StringComparer.OrdinalIgnoreCase)))))
-            .FirstOrDefault();
-        
-        return result?.Server != null;
-    }
-
-    private static McpCall Map(JsonNode node, McpServerInfo server)
+    private static McpCall Map(JsonNode node, List<McpServerInfo> servers)
     {
         var id = node.To<string>("call_id");
         var name = node.To<string>("name");
         var parameters = JsonSerializer.Deserialize<Dictionary<string, object>>(node.To<string>("arguments"));
+        var server = servers.Find(server => server.Tools.Any(tool => string.Equals(name, tool, StringComparison.OrdinalIgnoreCase)));
 
         return new McpCall(id, name, parameters, server);
     }
@@ -445,6 +427,42 @@ internal static class EndpointExtensions
     private static bool HasStore(JsonNode response)
     {
         return response.Eq("store", true);
+    }
+
+    private static List<McpCall> GetUnansweredCalls(List<JsonNode> history, List<McpServerInfo> servers)
+    {
+        var callIds = history
+            .Where(call => call.Eq("type", "function_call"))
+            .Select(call => call.To<string>("call_id"))
+            .ToHashSet();
+
+        var answerIds = history
+            .Where(call => call.Eq("type", "function_call_output"))
+            .Select(call => call.To<string>("call_id"))
+            .ToHashSet();
+
+        var notAnsweredIds = callIds
+            .Except(answerIds)
+            .ToHashSet();
+
+        return history
+            .Where(item => item.Eq("type", "function_call"))
+            .Join(notAnsweredIds, item => item.To<string>("call_id"), id => id, (item, _) => item)
+            .Select(item => Map(item, servers))
+            .ToList();
+    }
+
+    private static List<McpCall> GetCalls(JsonNode response, List<McpServerInfo> servers)
+    {
+        if (!response.TryGetArray("output", out var output))
+        {
+            return [];
+        }
+
+        return output
+            .Where(item => item.Eq("type", "function_call"))
+            .Select(item => Map(item, servers))
+            .ToList();
     }
 
     private class McpServerInfo
